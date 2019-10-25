@@ -1,0 +1,199 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: zipkin
+  annotations:
+    "openshift.io/display-name": Zipkin
+    iconClass: fa fa-cogs
+    tags: "monitoring,zipkin, alertmanager,time-series"
+parameters:
+- description: The namespace to instantiate zipkin under.
+  name: NAMESPACE
+  required: true
+- description: The location of the proxy image
+  name: IMAGE_PROXY
+  value: openshift/oauth-proxy:v1.0.0
+- description: The location of the zipkin image
+  name: IMAGE_ZIPKIN
+  value: docker.io/samirsaad/zipkin:latest
+- description: The session secret for the proxy
+  name: SESSION_SECRET
+  generate: expression
+  from: "[a-zA-Z0-9]{43}"
+
+objects:
+# Authorize the zipkin service account to read data about the cluster
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: zipkin
+    namespace: "${NAMESPACE}"
+    annotations:
+      serviceaccounts.openshift.io/oauth-redirectreference.zipkin: '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"zipkin"}}'
+
+# Create a fully end-to-end TLS connection to the zipkin proxy
+- apiVersion: route.openshift.io/v1
+  kind: Route
+  metadata:
+    name: zipkin
+    namespace: "${NAMESPACE}"
+  spec:
+    to:
+      kind: Service
+      name: zipkin
+    port:
+      targetPort: zipkin-proxy
+    tls:
+      termination: Reencrypt
+      insecureEdgeTerminationPolicy: Redirect
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      zipkin.io/scrape: "true"
+      zipkin.io/scheme: https
+      service.alpha.openshift.io/serving-cert-secret-name: zipkin-tls
+    labels:
+      name: zipkin
+    name: zipkin
+    namespace: "${NAMESPACE}"
+  spec:
+    ports:
+    - name: zipkin-proxy
+      port: 443
+      protocol: TCP
+      targetPort: 8443
+    selector:
+      app: zipkin
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      zipkin.io/scrape: "true"
+    labels:
+      name: zipkin-internal
+    name: zipkin-internal
+    namespace: "${NAMESPACE}"
+  spec:
+    ports:
+    - name: zipkin-internal
+      port: 9411
+      protocol: TCP
+      targetPort: 9411
+    selector:
+      app: zipkin
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: zipkin-proxy
+    namespace: "${NAMESPACE}"
+  stringData:
+    session_secret: "${SESSION_SECRET}="
+
+- apiVersion: apps/v1beta1
+  kind: StatefulSet
+  metadata:
+    labels:
+      app: zipkin
+    name: zipkin
+    namespace: "${NAMESPACE}"
+  spec:
+    updateStrategy:
+      type: RollingUpdate
+    podManagementPolicy: Parallel
+    selector:
+      matchLabels:
+        app: zipkin
+    template:
+      metadata:
+        labels:
+          app: zipkin
+        name: zipkin
+      spec:
+        serviceAccountName: zipkin
+        containers:
+        # Deploy Zipkin behind an oauth proxy
+        - name: zipkin-proxy
+          image: ${IMAGE_PROXY}
+          imagePullPolicy: IfNotPresent
+          ports:
+          - containerPort: 8443
+            name: web
+          args:
+          - -provider=openshift
+          - -https-address=:8443
+          - -http-address=
+          - -email-domain=*
+          - -upstream=http://localhost:9411
+          - -openshift-service-account=zipkin
+          - -client-id=system:serviceaccount:${NAMESPACE}:zipkin
+          - -openshift-ca=/etc/pki/tls/cert.pem
+          - -openshift-ca=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          - '-openshift-sar={"resource": "namespaces", "verb": "get", "resourceName": "${NAMESPACE}", "namespace": "${NAMESPACE}"}'
+          - -tls-cert=/etc/tls/private/tls.crt
+          - -tls-key=/etc/tls/private/tls.key
+          - -client-secret-file=/var/run/secrets/kubernetes.io/serviceaccount/token
+          - -cookie-secret-file=/etc/proxy/secrets/session_secret
+          - -skip-auth-regex=^/metrics
+          volumeMounts:
+          - mountPath: /etc/tls/private
+            name: zipkin-tls-secret
+          - mountPath: /etc/proxy/secrets
+            name: zipkin-proxy-secret
+          #- mountPath: /zipkin
+          #  name: zipkin-data
+        
+        - name: zipkin
+          env:
+          - name: JAVA_OPTIONS
+            value: '-Xms256m -Xmx800m'
+          image: "${IMAGE_ZIPKIN}"
+          imagePullPolicy: IfNotPresent
+          ports:
+          - containerPort: 9411
+            name: web
+          livenessProbe:
+            httpGet:
+              path: "/actuator/health"
+              port: 9411
+            initialDelaySeconds: 180
+          readinessProbe:
+            httpGet:
+              path: "/actuator/health"
+              port: 9411
+            initialDelaySeconds: 10
+          resources:
+            limits:
+              cpu: '1'
+              memory: 1Gi
+          volumeMounts:
+          #- mountPath: /etc/zipkin
+          #  name: zipkin-config
+          #- mountPath: /zipkin
+          #  name: zipkin-data
+
+        restartPolicy: Always
+        volumes:
+        #- name: zipkin-config
+        #  configMap:
+        #    defaultMode: 420
+        #    name: zipkin
+        #- name: zipkin-data
+        #  persistentVolumeClaim:
+        #    claimName: zipkin-data-pvc
+        - name: zipkin-proxy-secret
+          secret:
+            secretName: zipkin-proxy
+        - name: zipkin-tls-secret
+          secret:
+            secretName: zipkin-tls
+
+    #triggers:
+    #- imageChangeParams:
+    #    automatic: false
+    #    containerNames:
+    #    - zipkin
+    #    from:
+    #      kind: ImageStreamTag
+    #      name: 'zipkin:latest'
+    #  type: ImageChange

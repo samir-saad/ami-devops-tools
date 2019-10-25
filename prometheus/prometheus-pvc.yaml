@@ -1,0 +1,31 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: prometheus-storage
+  annotations:
+    "openshift.io/display-name": Prometheus Storage
+    iconClass: fa fa-cogs
+    tags: "monitoring,prometheus, alertmanager,time-series"
+parameters:
+- description: The namespace to instantiate prometheus under.
+  name: NAMESPACE
+  required: true
+- description: The Prometheus storage size.
+  name: PROMETHEUS_STORAGE
+  value: 20Gi
+
+objects:
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    labels:
+      app: prometheus
+      template: prometheus
+    name: prometheus-data-pvc
+    namespace: "${NAMESPACE}"
+  spec:
+    accessModes:
+    - ReadWriteMany
+    resources:
+      requests:
+        storage: "${PROMETHEUS_STORAGE}"

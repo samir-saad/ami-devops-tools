@@ -1,0 +1,35 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: prometheus-targets
+  annotations:
+    "openshift.io/display-name": Prometheus Targets
+    iconClass: fa fa-cogs
+    tags: "monitoring,prometheus, alertmanager,time-series"
+parameters:
+- description: The namespace to instantiate prometheus under.
+  name: NAMESPACE
+  required: true
+
+objects:
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: prometheus-targets
+    namespace: "${NAMESPACE}"
+  data:
+    targets.json: |
+      [
+        {
+          "labels": {
+            "job": "ami"
+          },
+          "targets": [
+            "pipeline-demo-app-mgmt-pipeline-demo-dev.cloudapps.ocp.local.net",
+            "pipeline-demo-app-mgmt-pipeline-demo-test.cloudapps.ocp.local.net",
+            "spring-config-server-mgmt-pipeline-demo-dev.cloudapps.ocp.local.net",
+            "spring-config-server-mgmt-pipeline-demo-test.cloudapps.ocp.local.net",
+            "inventory-service-mgmt-pipeline-demo-dev.cloudapps.ocp.local.net"    
+          ]
+        }
+      ]

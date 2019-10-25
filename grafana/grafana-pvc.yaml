@@ -1,0 +1,33 @@
+---
+kind: Template
+apiVersion: v1
+metadata:
+  name: grafana-storage
+  annotations:
+    "openshift.io/display-name": Grafana Storage
+    iconClass: fa fa-cogs
+    tags: "metrics,monitoring,grafana,prometheus"
+parameters:
+- description: The namespace to instantiate heapster under. Defaults to 'grafana'.
+  name: NAMESPACE
+  required: true
+- description: The Grafana storage size.
+  name: GRAFANA_STORAGE
+  value: 5Gi
+
+objects:
+
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    labels:
+      app: grafana
+      template: grafana
+    name: grafana-data-pvc
+    namespace: "${NAMESPACE}"
+  spec:
+    accessModes:
+    - ReadWriteMany
+    resources:
+      requests:
+        storage: "${GRAFANA_STORAGE}"
